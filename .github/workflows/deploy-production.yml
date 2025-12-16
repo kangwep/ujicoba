@@ -8,19 +8,39 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout selected tag
+      - name: Ensure workflow triggered from staging tag
+        run: |
+          if [[ "$GITHUB_REF" != refs/tags/*-staging ]]; then
+            echo "❌ Production deploy must be triggered from a *-staging tag"
+            exit 1
+          fi
+
+      - name: Checkout staging tag
         uses: actions/checkout@v4
 
-      - name: Show selected release
+      - name: Derive production tag
+        id: tag
         run: |
-          echo "🔥 Deploying ref: $GITHUB_REF"
-          echo "Commit: $GITHUB_SHA"
+          STAGING_TAG="${GITHUB_REF##*/}"
+          PROD_TAG="${STAGING_TAG%-staging}"
+
+          echo "prod_tag=$PROD_TAG" >> $GITHUB_OUTPUT
+
+      - name: Create production tag
+        run: |
+          git config user.name "github-actions"
+          git config user.email "github-actions@github.com"
+
+          git tag -a "${{ steps.tag.outputs.prod_tag }}" \
+            -m "Production release ${{ steps.tag.outputs.prod_tag }}"
+
+          git push origin "${{ steps.tag.outputs.prod_tag }}"
 
       - name: Build production image
         run: |
-          docker build -t test-app:production .
+          docker build -t test-app:${{ steps.tag.outputs.prod_tag }} .
 
       - name: Deploy to PRODUCTION
         run: |
-          echo "🚀 Deploying $GITHUB_REF to PRODUCTION"
+          echo "🚀 Deploying ${{ steps.tag.outputs.prod_tag }} to PRODUCTION"
 
