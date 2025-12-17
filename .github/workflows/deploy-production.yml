@@ -8,6 +8,12 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      # ✅ WAJIB
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # penting supaya tag terlihat
+
       - name: Ensure triggered from staging tag
         run: |
           if [[ "$GITHUB_REF" != refs/tags/*-staging ]]; then
@@ -24,16 +30,16 @@ jobs:
           echo "staging_tag=$STAGING_TAG" >> $GITHUB_OUTPUT
           echo "prod_tag=$PROD_TAG" >> $GITHUB_OUTPUT
 
-          echo "✅ STAGING TAG  = $STAGING_TAG"
-          echo "✅ PROD TAG     = $PROD_TAG"
+          echo "✅ STAGING TAG = $STAGING_TAG"
+          echo "✅ PROD TAG    = $PROD_TAG"
 
       - name: Simulate image promotion (NO BUILD)
         run: |
           echo "docker tag test-app:${{ steps.tag.outputs.staging_tag }} \
                        test-app:${{ steps.tag.outputs.prod_tag }}"
-          echo "✅ IMAGE PROMOTED (NO REBUILD)"
+          echo "✅ IMAGE PROMOTED"
 
-      - name: Create clean production git tag
+      - name: Create production git tag
         run: |
           git config user.name "github-actions"
           git config user.email "github-actions@github.com"
