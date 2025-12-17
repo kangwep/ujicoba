@@ -1,4 +1,4 @@
-name: Deploy Production
+name: Deploy Production (Promote Only)
 
 on:
   workflow_dispatch:
@@ -8,15 +8,12 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Ensure workflow triggered from staging tag
+      - name: Ensure triggered from staging tag
         run: |
           if [[ "$GITHUB_REF" != refs/tags/*-staging ]]; then
-            echo "❌ Production deploy must be triggered from a *-staging tag"
+            echo "❌ Production must be triggered from *-staging tag"
             exit 1
           fi
-
-      - name: Checkout staging tag
-        uses: actions/checkout@v4
 
       - name: Derive production tag
         id: tag
@@ -24,9 +21,19 @@ jobs:
           STAGING_TAG="${GITHUB_REF##*/}"
           PROD_TAG="${STAGING_TAG%-staging}"
 
+          echo "staging_tag=$STAGING_TAG" >> $GITHUB_OUTPUT
           echo "prod_tag=$PROD_TAG" >> $GITHUB_OUTPUT
 
-      - name: Create production tag
+          echo "✅ STAGING TAG  = $STAGING_TAG"
+          echo "✅ PROD TAG     = $PROD_TAG"
+
+      - name: Simulate image promotion (NO BUILD)
+        run: |
+          echo "docker tag test-app:${{ steps.tag.outputs.staging_tag }} \
+                       test-app:${{ steps.tag.outputs.prod_tag }}"
+          echo "✅ IMAGE PROMOTED (NO REBUILD)"
+
+      - name: Create clean production git tag
         run: |
           git config user.name "github-actions"
           git config user.email "github-actions@github.com"
@@ -35,12 +42,3 @@ jobs:
             -m "Production release ${{ steps.tag.outputs.prod_tag }}"
 
           git push origin "${{ steps.tag.outputs.prod_tag }}"
-
-      - name: Build production image
-        run: |
-          docker build -t test-app:${{ steps.tag.outputs.prod_tag }} .
-
-      - name: Deploy to PRODUCTION
-        run: |
-          echo "🚀 Deploying ${{ steps.tag.outputs.prod_tag }} to PRODUCTION"
-

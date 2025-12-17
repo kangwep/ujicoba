@@ -1,4 +1,4 @@
-name: Deploy Staging
+name: Deploy Staging (Tag & Version Only)
 
 on:
   push:
@@ -10,23 +10,27 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout source
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Extract version from branch
+      - name: Extract version from release branch
         id: version
         run: |
-          BRANCH_NAME="${GITHUB_REF##*/}"
-          VERSION="${BRANCH_NAME#release/}"
+          VERSION="${GITHUB_REF##*/}"
 
           if [[ -z "$VERSION" ]]; then
-            echo "Invalid release branch name"
+            echo "❌ Invalid release branch"
             exit 1
           fi
 
           echo "version=$VERSION" >> $GITHUB_OUTPUT
 
-      - name: Create staging tag
+      - name: Simulate build staging image
+        run: |
+          IMAGE_TAG="v${{ steps.version.outputs.version }}-staging"
+          echo "docker build -t test-app:$IMAGE_TAG ."
+          echo "✅ STAGING IMAGE TAG = test-app:$IMAGE_TAG"
+
+      - name: Create git staging tag
         run: |
           TAG="v${{ steps.version.outputs.version }}-staging"
 
@@ -35,12 +39,3 @@ jobs:
 
           git tag -a "$TAG" -m "Staging release $TAG"
           git push origin "$TAG"
-
-      - name: Build Docker image
-        run: |
-          docker build -t test-app:${{ steps.version.outputs.version }} .
-
-      - name: Deploy to STAGING
-        run: |
-          echo "🚀 Deploying version ${{ steps.version.outputs.version }} to STAGING"
-          echo "Here you can add SSH / docker-compose / kubectl"
