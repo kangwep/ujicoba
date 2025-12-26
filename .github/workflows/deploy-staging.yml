@@ -5,6 +5,19 @@ on:
     branches:
       - "release/*"
 
+  workflow_dispatch:
+    inputs:
+      note:
+        description: |
+          NOTE:
+          - Workflow ini HANYA untuk branch release/*
+          - Jika dijalankan dari branch lain → AKAN GAGAL
+        required: false
+        default: "release-only"
+        type: choice
+        options:
+          - release-only
+
 permissions:
   contents: write
 
@@ -14,13 +27,27 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      - name: Validate branch
+        run: |
+          if [[ ! "$GITHUB_REF" =~ ^refs/heads/release/ ]]; then
+            echo "::error::❌ Workflow ini hanya boleh dijalankan dari branch release/*"
+            exit 1
+          fi
+
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Extract version
         id: version
         run: |
-          VERSION="${GITHUB_REF##*/}"
+          RAW_VERSION="${GITHUB_REF##*/}"
+
+          # Hilangkan prefix v jika ada
+          VERSION="${RAW_VERSION#v}"
+
           echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Resolved version: $VERSION"
 
       - name: Auth GCP
         uses: google-github-actions/auth@v2
@@ -29,12 +56,15 @@ jobs:
 
       - name: Configure Docker
         run: |
-          gcloud auth configure-docker ${{ secrets.GCP_REGION }}-docker.pkg.dev
+          gcloud auth configure-docker \
+            ${{ secrets.GCP_REGION }}-docker.pkg.dev
 
       - name: Build & Push Staging Image
         run: |
           IMAGE_TAG="v${{ steps.version.outputs.version }}-staging"
-          IMAGE="${{ secrets.GCP_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/mta-docker/test-app:$IMAGE_TAG"
+          IMAGE="${{ secrets.GCP_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/mta-docker/test-app:${IMAGE_TAG}"
 
-          docker build -t $IMAGE .
-          docker push $IMAGE
+          echo "Building image: $IMAGE"
+
+          docker build -t "$IMAGE" .
+          docker push "$IMAGE"
