@@ -1,4 +1,4 @@
-name: Release Branch → Auto Tag Staging
+name: Release Branch → Auto Create Staging Tag
 
 on:
   push:
@@ -6,32 +6,37 @@ on:
       - 'release/*'
 
 permissions:
-  contents: write   # wajib untuk create tag
+  contents: write   # wajib untuk create & push tag
 
 jobs:
-  auto-tag:
-    name: Auto Create Staging Tag
+  auto-tag-staging:
+    name: Auto Tag Staging
     runs-on: ubuntu-latest
 
     outputs:
-      version: ${{ steps.version.outputs.version }}
-      tag: ${{ steps.version.outputs.tag }}
+      version: ${{ steps.extract.outputs.version }}
+      tag: ${{ steps.extract.outputs.tag }}
 
     steps:
-      - name: Checkout
+      # 1. Checkout full history (WAJIB untuk tagging)
+      - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0   # penting untuk tag
+          fetch-depth: 0
 
-      - name: Validate release branch
-        id: version
+      # 2. Validasi branch + extract version
+      - name: Validate release branch & extract version
+        id: extract
         run: |
+          set -e
+
           BRANCH="${GITHUB_REF#refs/heads/}"
+          echo "Detected branch: $BRANCH"
 
-          echo "Branch: $BRANCH"
-
+          # Validasi format: release/vX.Y.Z
           if [[ ! "$BRANCH" =~ ^release/v([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
-            echo "❌ Branch harus format: release/vX.Y.Z"
+            echo "❌ INVALID branch name"
+            echo "Expected: release/vX.Y.Z"
             exit 1
           fi
 
@@ -41,16 +46,31 @@ jobs:
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "tag=$TAG" >> $GITHUB_OUTPUT
 
-      - name: Check tag exists
+          echo "✅ Version  : $VERSION"
+          echo "✅ Tag name: $TAG"
+
+      # 3. Configure git identity (FIX ERROR: Committer identity unknown)
+      - name: Configure git identity
         run: |
-          if git rev-parse "${{ steps.version.outputs.tag }}" >/dev/null 2>&1; then
-            echo "⚠️ Tag sudah ada, skip create"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      # 4. Cek apakah tag sudah ada (anti duplicate)
+      - name: Check if tag already exists
+        run: |
+          if git rev-parse "${{ steps.extract.outputs.tag }}" >/dev/null 2>&1; then
+            echo "⚠️ Tag already exists: ${{ steps.extract.outputs.tag }}"
+            echo "Skip tagging."
             exit 0
           fi
 
-      - name: Create staging tag
+      # 5. Create annotated tag
+      - name: Create annotated staging tag
         run: |
-          git tag -a "${{ steps.version.outputs.tag }}" \
-            -m "Staging release v${{ steps.version.outputs.version }}"
+          git tag -a "${{ steps.extract.outputs.tag }}" \
+            -m "Staging release v${{ steps.extract.outputs.version }}"
 
-          git push origin "${{ steps.version.outputs.tag }}"
+      # 6. Push tag to repository
+      - name: Push tag
+        run: |
+          git push origin "${{ steps.extract.outputs.tag }}"
