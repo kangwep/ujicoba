@@ -1,90 +1,56 @@
-name: CI/CD Pipeline
+name: Release Branch → Auto Tag Staging
 
 on:
-  # 1. Otomatis saat push ke master
   push:
     branches:
-      - master
       - 'release/*'
-      - '*-staging'
 
-  # 2. Manual trigger
-  workflow_dispatch:
-    inputs:
-      ref:
-        description: 'Branch / tag (wajib: release/*, *-staging, atau master)'
-        required: true
-        default: master
-      environment:
-        description: 'Target environment'
-        required: true
-        type: choice
-        options:
-          - staging
-          - production
+permissions:
+  contents: write   # wajib untuk create tag
 
 jobs:
-  validate:
-    name: Validate Ref
+  auto-tag:
+    name: Auto Create Staging Tag
     runs-on: ubuntu-latest
+
     outputs:
-      ref: ${{ steps.ref.outputs.ref }}
-      env: ${{ steps.env.outputs.env }}
+      version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
 
     steps:
-      - name: Resolve ref
-        id: ref
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # penting untuk tag
+
+      - name: Validate release branch
+        id: version
         run: |
-          if [[ "${{ github.event_name }}" == "push" ]]; then
-            REF="${GITHUB_REF#refs/heads/}"
-          else
-            REF="${{ github.event.inputs.ref }}"
-          fi
+          BRANCH="${GITHUB_REF#refs/heads/}"
 
-          echo "Using ref: $REF"
+          echo "Branch: $BRANCH"
 
-          if [[ "$REF" != "master" && \
-                "$REF" != release/* && \
-                "$REF" != *-staging ]]; then
-            echo "❌ Branch tidak diizinkan: $REF"
-            echo "Hanya master, release/*, atau *-staging"
+          if [[ ! "$BRANCH" =~ ^release/v([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
+            echo "❌ Branch harus format: release/vX.Y.Z"
             exit 1
           fi
 
-          echo "ref=$REF" >> $GITHUB_OUTPUT
+          VERSION="${BASH_REMATCH[1]}"
+          TAG="v${VERSION}-staging"
 
-      - name: Resolve environment
-        id: env
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
+
+      - name: Check tag exists
         run: |
-          if [[ "$REF" == master ]]; then
-            echo "env=production" >> $GITHUB_OUTPUT
-          else
-            echo "env=staging" >> $GITHUB_OUTPUT
+          if git rev-parse "${{ steps.version.outputs.tag }}" >/dev/null 2>&1; then
+            echo "⚠️ Tag sudah ada, skip create"
+            exit 0
           fi
 
-  build:
-    name: Build
-    runs-on: ubuntu-latest
-    needs: validate
-
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ needs.validate.outputs.ref }}
-
-      - name: Build
+      - name: Create staging tag
         run: |
-          echo "Build from ${{ needs.validate.outputs.ref }}"
+          git tag -a "${{ steps.version.outputs.tag }}" \
+            -m "Staging release v${{ steps.version.outputs.version }}"
 
-  deploy:
-    name: Deploy
-    runs-on: ubuntu-latest
-    needs: build
-    environment: ${{ needs.validate.outputs.env }}
-
-    steps:
-      - name: Deploy
-        run: |
-          echo "Deploying..."
-          echo "Ref : ${{ needs.validate.outputs.ref }}"
-          echo "Env : ${{ needs.validate.outputs.env }}"
+          git push origin "${{ steps.version.outputs.tag }}"
