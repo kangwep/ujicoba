@@ -1,130 +1,81 @@
-name: CI - claim-mind-web
+name: Release & Manual Pipeline
 
 on:
-  push:
-    branches:
-      - pipeline
-      - 'release/**' # Juga jalankan CI untuk branch rilis
-    # paths:
-    #   - 'apps/claim-mind-web/**' # Hanya terpicu jika perubahan di aplikasi ini
-  pull_request:
-    branches:
-      - main
-      - 'release/**' # Juga jalankan CI untuk PR ke branch rilis
-    paths:
-      - 'apps/claim-mind-web/**' # Hanya terpicu jika perubahan di aplikasi ini
+  # Auto trigger saat Release dibuat
+  release:
+    types:
+      - published
+
+  # Manual trigger (Run workflow)
   workflow_dispatch:
     inputs:
       ref:
-        description: 'Branch atau tag yang ingin di-build dan di-deploy ke staging'
+        description: 'Branch atau tag (default: master)'
         required: true
-        type: string
+        default: master
+      environment:
+        description: 'Target environment'
+        required: true
+        type: choice
+        options:
+          - sandbox
+          - staging
+          - production
 
 env:
-  DOCKER_IMAGE_PATH: asia-southeast2-docker.pkg.dev/mta-staging-app-os/mta-docker/claimmind/claim-mind-web
+  APP_NAME: my-app
+  IMAGE_NAME: ghcr.io/${{ github.repository }}
 
 jobs:
-  build-test-lint:
+  prepare:
+    name: Prepare Context
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: apps/claim-mind-web # Semua perintah akan dijalankan di direktori ini
+    outputs:
+      ref: ${{ steps.ref.outputs.ref }}
+      env: ${{ steps.env.outputs.env }}
+
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20' # Sesuaikan dengan versi Node.js yang digunakan project Anda
-
-      - name: Install dependencies
-        run: npm ci # Menggunakan npm ci untuk instalasi bersih berdasarkan package-lock.json
-
-      - name: Run ESLint
-        run: npm run lint # Asumsi ada script 'lint' di package.json
-
-      - name: Run tests
-        run: npm test # Asumsi ada script 'test' di package.json
-
-      - name: Build project
-        run: npm run build # Asumsi ada script 'build' di package.json
-
-  build-push-and-tag:
-    # Job ini berjalan jika 'build-test-lint' sukses DAN
-    # (event adalah push ke 'release/*' ATAU event adalah trigger manual 'workflow_dispatch')
-    if: needs.build-test-lint.result == 'success' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && startsWith(github.ref, 'refs/heads/release/')))
-    needs: build-test-lint
-    runs-on: ubuntu-latest
-    permissions:
-      contents: 'write' # Diperlukan untuk membuat Git tag
-      id-token: 'write' # Diperlukan untuk otentikasi ke Google Cloud
-    environment: staging # Mengambil rahasia dari environment 'staging'
-    
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0 # Diperlukan untuk membuat tag
-
-      - name: Get Version Tag
-        id: get_version
+      - name: Resolve ref
+        id: ref
         run: |
-          REF_TO_PROCESS=""
-          TAG_SUFFIX="-staging"
-
-          if [[ "${{ github.event_name }}" == "push" ]]; then
-            REF_TO_PROCESS="${{ github.ref_name }}"
-          elif [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
-            REF_TO_PROCESS="${{ github.event.inputs.ref }}"
-          fi
-
-          if [[ -z "$REF_TO_PROCESS" ]]; then
-            echo "Error: Could not determine the ref to process."
-            exit 1
-          fi
-
-          # Ekstrak versi dari 'release/v1.2.3' atau sanitize nama branch seperti 'feature/login'
-          if [[ "$REF_TO_PROCESS" == release/* ]]; then
-            VERSION=$(echo "$REF_TO_PROCESS" | sed 's/release\///')
+          if [[ "${{ github.event_name }}" == "release" ]]; then
+            echo "ref=${{ github.event.release.tag_name }}" >> $GITHUB_OUTPUT
           else
-            VERSION=$(echo "$REF_TO_PROCESS" | sed 's/\//-/g') # Ganti '/' dengan '-'
+            echo "ref=${{ github.event.inputs.ref || 'master' }}" >> $GITHUB_OUTPUT
           fi
 
-          VERSION_TAG="${VERSION}${TAG_SUFFIX}"
-          echo "Image and Git Tag: $VERSION_TAG"
-          echo "version_tag=$VERSION_TAG" >> "$GITHUB_OUTPUT"
-
-      - name: Authenticate to Google Cloud
-        id: auth
-        uses: 'google-github-actions/auth@v2'
-        with:
-          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
-          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-      
-      - name: Configure Docker for Google Artifact Registry
-        run: gcloud auth configure-docker asia-southeast2-docker.pkg.dev
-
-      - name: Build and push Docker image
-        id: build_and_push
-        uses: docker/build-push-action@v5
-        with:
-          context: ./apps/claim-mind-web
-          file: ./apps/claim-mind-web/Dockerfile
-          push: true
-          tags: ${{ env.DOCKER_IMAGE_PATH }}:${{ steps.get_version.outputs.version_tag }}
-          labels: |
-            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
-            org.opencontainers.image.revision=${{ github.sha }}
-
-      - name: Create and Push Git Tag
+      - name: Resolve environment
+        id: env
         run: |
-          TAG_NAME="${{ steps.get_version.outputs.version_tag }}"
-          echo "Creating and pushing Git tag: $TAG_NAME"
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git tag $TAG_NAME
-          git push origin $TAG_NAME
+          if [[ "${{ github.event_name }}" == "release" ]]; then
+            echo "env=production" >> $GITHUB_OUTPUT
+          else
+            echo "env=${{ github.event.inputs.environment }}" >> $GITHUB_OUTPUT
+          fi
+
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    needs: prepare
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.ref }}
+
+      - name: Build
+        run: |
+          echo "Build from ref: ${{ needs.prepare.outputs.ref }}"
+
+  deploy:
+    name: Deploy
+    runs-on: ubuntu-latest
+    needs: build
+    environment: ${{ needs.prepare.outputs.env }}
+
+    steps:
+      - name: Deploy
+        run: |
+          echo "Deploying ref=${{ needs.prepare.outputs.ref }}"
+          echo "Environment=${{ needs.prepare.outputs.env }}"

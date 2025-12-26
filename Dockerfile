@@ -1,9 +1,12 @@
-FROM alpine:3.20
+FROM nginx:alpine
 
-WORKDIR /app
+RUN apk add --no-cache gettext
 
-COPY app/index.sh /app/index.sh
+COPY app/index.html.template /usr/share/nginx/html/index.html.template
+COPY app/entrypoint.sh /entrypoint.sh
 
-RUN chmod +x /app/index.sh
+RUN chmod +x /entrypoint.sh
 
-CMD ["/app/index.sh"]
+EXPOSE 80
+
+ENTRYPOINT ["/entrypoint.sh"]
